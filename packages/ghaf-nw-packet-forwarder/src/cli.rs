@@ -51,6 +51,10 @@ struct Args {
     #[arg(long)]
     internal_ip: Option<IpNetwork>,
 
+    /// Enable Rate limiting functionality
+    #[arg(long, default_value_t = 1)]
+    rate_limiting: u8,
+
     /// Enable Chromecast packet forwarding functionality
     #[arg(long, default_value_t = 0)]
     chromecast: u8,
@@ -119,4 +123,8 @@ pub fn get_log_level() -> &'static log::Level {
 
 pub fn get_log_output() -> &'static LogOutput {
     &CLI_ARGS.log_output
+}
+
+pub fn get_ratelimiting_enabled() -> bool {
+    CLI_ARGS.rate_limiting == 1
 }

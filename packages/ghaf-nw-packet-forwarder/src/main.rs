@@ -21,6 +21,7 @@ use syslog::{BasicLogger, Facility, Formatter3164};
 use tokio::signal;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
+
 #[tokio::main]
 async fn main() {
     initialize_logger();
@@ -31,14 +32,14 @@ async fn main() {
     // Find the external interface
     let external_iface = interfaces
         .iter()
-        .find(|iface| iface.name == cli::get_ext_iface_name())
+        .find(|iface| iface.name == cli::get_ext_iface_name() && !iface.is_loopback())
         .expect("No matching external interface found")
         .clone(); // Clone the interface to avoid borrowing issues
 
     // Find the internal interface
     let internal_iface: datalink::NetworkInterface = interfaces
         .iter()
-        .find(|iface| iface.name == cli::get_int_iface_name())
+        .find(|iface| iface.name == cli::get_int_iface_name() && !iface.is_loopback())
         .expect("No matching internal interface found")
         .clone(); // Clone the interface to avoid borrowing issues
     info!(
@@ -53,7 +54,8 @@ async fn main() {
         cli::get_ext_ip(),
         cli::get_int_ip(),
     ) {
-        panic!("Failed to assign interfaces: {}", e);
+        error!("Failed to assign interfaces: {}", e);
+        std::process::exit(1); // Optional: Exit with a specific non-zero code
     }
 
     debug!("ifaces:{:?}", forward::get_ifaces());
@@ -87,6 +89,9 @@ async fn main() {
     // Create a CancellationToken
     let token = CancellationToken::new();
 
+    // Security algorithms init
+    forward::set_sec_params(cli::get_ratelimiting_enabled(), token.clone()).await;
+
     // chromecast feature enabling
     let chromecast = Arc::new(Mutex::new(Chromecast::new(forward::get_ifaces())));
     // Lock only once here for external_ops
@@ -99,6 +104,7 @@ async fn main() {
         let cancel_token = token.clone();
         let internal_iface = internal_iface.clone();
         let ifaces = get_ifaces();
+        let mut last_err = String::from("");
 
         async move {
             info!("Starting packet capture on {}...", internal_iface.name);
@@ -114,15 +120,21 @@ async fn main() {
                     }
                 _ = async {
 
-                match capture_next_packet(&internal_rx_ch).await  {
-                    Ok(mut frame) => {
-                        process_internal_packets(&chromecast_internal,&external_tx_ch,&mut frame,&internal_iface,&ifaces).await;
+                if forward::is_iface_running_up(&internal_iface.name) {
+                    match capture_next_packet(&internal_rx_ch).await  {
+                        Ok(mut frame) => {
+                            process_internal_packets(&chromecast_internal,&external_tx_ch,&mut frame,&internal_iface,&ifaces).await;
 
-                    }
-                    Err(e) => {
-                        error!("Error receiving packet on {}: {}", internal_iface.name, e);
+                        }
+                        Err(e) => {
+                            if last_err !=e{
+                                error!("Error receiving packet on {}: {}", internal_iface.name, e);
+                                last_err =e;
+                            }
+                        }
                     }
                 }
+
                 }=> {}
                 }
             }
@@ -133,9 +145,9 @@ async fn main() {
 
     // Spawn a blocking thread for packet processing (capture loop) on eth0
     let external_task = tokio::task::spawn({
-        let internal_iface: datalink::NetworkInterface = internal_iface.clone();
+        let internal_iface = internal_iface.clone();
         let cancel_token = token.clone();
-
+        let mut last_err = String::from("");
         async move {
             info!("Starting packet capture on {}...", external_iface.name);
             let chromecast_external = chromecast_external.clone(); // Clone Arc to give external task access
@@ -150,15 +162,19 @@ async fn main() {
                     }
                 _ = async {
 
-
-                match capture_next_packet(&external_rx_ch).await  {
+                if forward::is_iface_running_up(&external_iface.name) {
+                    match capture_next_packet(&external_rx_ch).await  {
                      Ok(mut frame) => {
                         process_external_packets(&chromecast_external,&internal_tx_ch,&mut frame,&external_iface,&internal_iface).await;
                      }
                      Err(e) => {
-                         error!("Error receiving packet on {}: {}", external_iface.name, e);
+                        if last_err !=e{
+                            error!("Error receiving packet on {}: {}", external_iface.name, e);
+                            last_err =e;
+                        }
                      }
                  }
+                }
                 }=> {}
                 }
             }
