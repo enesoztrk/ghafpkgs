@@ -665,11 +665,15 @@ void cleanup_proxy_state() {
         g_dbus_node_info_unref(proxy_state->introspection_data);
     }
 
-    g_dbus_connection_flush_sync(proxy_state->source_bus, NULL, NULL);
-    g_dbus_connection_flush_sync(proxy_state->target_bus, NULL, NULL);
+    if (proxy_state->source_bus)
+        g_dbus_connection_flush_sync(proxy_state->source_bus, NULL, NULL);
+    if (proxy_state->target_bus)
+        g_dbus_connection_flush_sync(proxy_state->target_bus, NULL, NULL);
 
-    g_dbus_connection_close_sync(proxy_state->source_bus, NULL, NULL);
-    g_dbus_connection_close_sync(proxy_state->target_bus, NULL, NULL);
+    if (proxy_state->source_bus)
+        g_dbus_connection_close_sync(proxy_state->source_bus, NULL, NULL);
+    if (proxy_state->target_bus)
+        g_dbus_connection_close_sync(proxy_state->target_bus, NULL, NULL);
 
     if (proxy_state->source_bus) {
         g_object_unref(proxy_state->source_bus);
